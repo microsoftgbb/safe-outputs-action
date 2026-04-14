@@ -1,6 +1,6 @@
 import * as core from '@actions/core';
 import * as github from '@actions/github';
-import { AgentOutput, AgentAction } from './types';
+import { AgentOutput, AgentAction, CreatePullRequestAction } from './types';
 
 type Octokit = ReturnType<typeof github.getOctokit>;
 type Context = typeof github.context;
@@ -77,16 +77,7 @@ async function applyAction(
     }
 
     case 'create_pull_request': {
-      const baseBranch = action.base || context.ref.replace('refs/heads/', '');
-      const { data } = await octokit.rest.pulls.create({
-        owner,
-        repo,
-        title: action.title,
-        body: action.body,
-        head: action.head,
-        base: baseBranch,
-      });
-      return data.html_url;
+      return await createPullRequest(octokit, owner, repo, context, action);
     }
 
     case 'add_labels': {
@@ -101,5 +92,138 @@ async function applyAction(
 
     default:
       throw new Error(`Unknown action type: ${(action as AgentAction).type}`);
+  }
+}
+
+/**
+ * Creates a pull request. If `files` are provided, creates a new branch
+ * and commits the files via the Git Data API before opening the PR.
+ * This avoids needing local git or contents:write on the agent job.
+ */
+async function createPullRequest(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  context: Context,
+  action: CreatePullRequestAction
+): Promise<string> {
+  const baseBranch = action.base || context.ref.replace('refs/heads/', '');
+
+  if (action.files && Object.keys(action.files).length > 0) {
+    await createBranchWithFiles(
+      octokit,
+      owner,
+      repo,
+      baseBranch,
+      action.head,
+      action.files,
+      action.commit_message || action.title
+    );
+  }
+
+  const { data } = await octokit.rest.pulls.create({
+    owner,
+    repo,
+    title: action.title,
+    body: action.body,
+    head: action.head,
+    base: baseBranch,
+  });
+  return data.html_url;
+}
+
+/**
+ * Creates a branch with the given files using the Git Data API.
+ *
+ * Flow:
+ * 1. Get the SHA of the base branch head commit
+ * 2. Get the tree SHA of that commit
+ * 3. Create blobs for each file
+ * 4. Create a new tree with those blobs
+ * 5. Create a commit pointing to that tree
+ * 6. Create (or update) the branch ref
+ */
+async function createBranchWithFiles(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  baseBranch: string,
+  headBranch: string,
+  files: Record<string, string>,
+  commitMessage: string
+): Promise<void> {
+  core.info(`Creating branch "${headBranch}" from "${baseBranch}" with ${Object.keys(files).length} file(s)`);
+
+  // 1. Get base branch SHA
+  const { data: baseRef } = await octokit.rest.git.getRef({
+    owner,
+    repo,
+    ref: `heads/${baseBranch}`,
+  });
+  const baseSha = baseRef.object.sha;
+
+  // 2. Get base tree
+  const { data: baseCommit } = await octokit.rest.git.getCommit({
+    owner,
+    repo,
+    commit_sha: baseSha,
+  });
+  const baseTreeSha = baseCommit.tree.sha;
+
+  // 3. Create blobs for each file
+  const treeItems: Array<{
+    path: string;
+    mode: '100644';
+    type: 'blob';
+    sha: string;
+  }> = [];
+
+  for (const [path, content] of Object.entries(files)) {
+    const { data: blob } = await octokit.rest.git.createBlob({
+      owner,
+      repo,
+      content: Buffer.from(content).toString('base64'),
+      encoding: 'base64',
+    });
+    treeItems.push({ path, mode: '100644', type: 'blob', sha: blob.sha });
+    core.info(`  blob: ${path} (${content.length} bytes)`);
+  }
+
+  // 4. Create tree
+  const { data: newTree } = await octokit.rest.git.createTree({
+    owner,
+    repo,
+    base_tree: baseTreeSha,
+    tree: treeItems,
+  });
+
+  // 5. Create commit
+  const { data: newCommit } = await octokit.rest.git.createCommit({
+    owner,
+    repo,
+    message: commitMessage,
+    tree: newTree.sha,
+    parents: [baseSha],
+  });
+
+  // 6. Create or update branch ref
+  try {
+    await octokit.rest.git.createRef({
+      owner,
+      repo,
+      ref: `refs/heads/${headBranch}`,
+      sha: newCommit.sha,
+    });
+    core.info(`Created branch: ${headBranch}`);
+  } catch {
+    // Branch may already exist - update it
+    await octokit.rest.git.updateRef({
+      owner,
+      repo,
+      ref: `heads/${headBranch}`,
+      sha: newCommit.sha,
+      force: true,
+    });
+    core.info(`Updated existing branch: ${headBranch}`);
   }
 }

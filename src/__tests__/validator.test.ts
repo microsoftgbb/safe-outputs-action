@@ -170,3 +170,45 @@ describe('validateOutput', () => {
     expect(result.valid).toBe(false);
   });
 });
+
+describe('validateOutput - create_pull_request with files', () => {
+  const constraints = {
+    maxIssues: 1,
+    maxComments: 3,
+    maxPullRequests: 1,
+    maxLabels: 5,
+    titlePrefix: '[bot] ',
+    allowedLabels: [],
+  };
+
+  it('passes PR with files', () => {
+    const output = {
+      actions: [
+        {
+          type: 'create_pull_request' as const,
+          title: '[bot] Fix config',
+          body: 'Details',
+          head: 'fix/config',
+          files: { 'config.yaml': 'key: value' },
+        },
+      ],
+    };
+    const result = validateOutput(output, constraints);
+    expect(result.valid).toBe(true);
+  });
+
+  it('passes PR without files (branch must exist)', () => {
+    const output = {
+      actions: [
+        {
+          type: 'create_pull_request' as const,
+          title: '[bot] Fix config',
+          body: 'Details',
+          head: 'fix/config',
+        },
+      ],
+    };
+    const result = validateOutput(output, constraints);
+    expect(result.valid).toBe(true);
+  });
+});

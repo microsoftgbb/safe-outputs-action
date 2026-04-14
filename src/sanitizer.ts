@@ -51,6 +51,7 @@ export function sanitizeOutput(output: AgentOutput, customPatterns: string[] = [
   for (let i = 0; i < sanitized.actions.length; i++) {
     const action = sanitized.actions[i];
 
+    // Scan top-level string fields (body, title, etc.)
     for (const [field, value] of Object.entries(action)) {
       if (typeof value !== 'string' || field === 'type') continue;
 
@@ -60,6 +61,18 @@ export function sanitizeOutput(output: AgentOutput, customPatterns: string[] = [
         (action as any)[field] = result.value;
         redactedCount++;
         redactedFields.push(`actions[${i}].${field}`);
+      }
+    }
+
+    // Scan files map for create_pull_request actions
+    if (action.type === 'create_pull_request' && action.files) {
+      for (const [path, content] of Object.entries(action.files)) {
+        const result = sanitizeString(content, patterns);
+        if (result.wasRedacted) {
+          action.files[path] = result.value;
+          redactedCount++;
+          redactedFields.push(`actions[${i}].files["${path}"]`);
+        }
       }
     }
   }

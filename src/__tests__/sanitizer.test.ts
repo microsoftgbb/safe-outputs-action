@@ -129,3 +129,48 @@ describe('sanitizeOutput', () => {
     expect(result.output.actions[0].type).toBe('issue_comment');
   });
 });
+
+describe('sanitizeOutput - files map', () => {
+  it('redacts secrets inside PR file contents', () => {
+    const output = {
+      actions: [
+        {
+          type: 'create_pull_request' as const,
+          title: 'Fix config',
+          body: 'Clean body',
+          head: 'fix/config',
+          files: {
+            'config.yaml': 'db_password=SuperSecret123!',
+            'readme.md': 'Just a readme',
+          },
+        },
+      ],
+    };
+    const result = sanitizeOutput(output);
+    expect(result.redactedCount).toBe(1);
+    expect(result.redactedFields).toContain('actions[0].files["config.yaml"]');
+    const pr = result.output.actions[0] as any;
+    expect(pr.files['config.yaml']).not.toContain('SuperSecret123');
+    expect(pr.files['readme.md']).toBe('Just a readme');
+  });
+
+  it('redacts secrets in both body and files', () => {
+    const output = {
+      actions: [
+        {
+          type: 'create_pull_request' as const,
+          title: 'Fix',
+          body: 'Token: ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmn',
+          head: 'fix/thing',
+          files: {
+            '.env': 'API_KEY=AKIAIOSFODNN7EXAMPLE',
+          },
+        },
+      ],
+    };
+    const result = sanitizeOutput(output);
+    expect(result.redactedCount).toBe(2);
+    expect(result.redactedFields).toContain('actions[0].body');
+    expect(result.redactedFields).toContain('actions[0].files[".env"]');
+  });
+});

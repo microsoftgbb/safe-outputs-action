@@ -96,12 +96,49 @@ The agent must produce a JSON file conforming to this schema:
 
 ### Supported action types
 
-| Type | Description | Required fields |
-|------|-------------|----------------|
-| `issue_comment` | Add a comment to an existing issue or PR | `issue_number`, `body` |
-| `create_issue` | Create a new issue | `title`, `body` |
-| `create_pull_request` | Create a PR (branch must already exist) | `title`, `body`, `head` |
-| `add_labels` | Add labels to an existing issue or PR | `issue_number`, `labels` |
+| Type                  | Description                                                                 | Required fields          |
+| --------------------- | --------------------------------------------------------------------------- | ------------------------ |
+| `issue_comment`       | Add a comment to an existing issue or PR                                    | `issue_number`, `body`   |
+| `create_issue`        | Create a new issue                                                          | `title`, `body`          |
+| `create_pull_request` | Create a PR. Optionally provide `files` to create the branch automatically. | `title`, `body`, `head`  |
+| `add_labels`          | Add labels to an existing issue or PR                                       | `issue_number`, `labels` |
+
+### File-based pull requests
+
+When `files` is provided in a `create_pull_request` action, the safe-outputs
+action handles the full workflow:
+
+1. Gets the base branch HEAD SHA
+2. Creates blobs for each file via the Git Data API
+3. Creates a new tree with those blobs
+4. Creates a commit on that tree
+5. Creates (or updates) the branch ref
+6. Opens the pull request
+
+The agent never needs write access -- all Git operations happen in the gated
+write job.
+
+```json
+{
+  "type": "create_pull_request",
+  "title": "[cluster-doctor] Fix HPA configuration",
+  "body": "Adjusted maxReplicas based on node capacity analysis.",
+  "head": "fix/hpa-config",
+  "base": "main",
+  "files": {
+    "k8s/hpa.yaml": "apiVersion: autoscaling/v2\nkind: HorizontalPodAutoscaler\nmetadata:\n  name: my-app\nspec:\n  maxReplicas: 10",
+    "docs/changes.md": "# Changes\n\nUpdated HPA max replicas to 10."
+  },
+  "commit_message": "fix: adjust HPA max replicas based on cluster capacity"
+}
+```
+
+| Field            | Required | Description                                                                  |
+| ---------------- | -------- | ---------------------------------------------------------------------------- |
+| `files`          | No       | Map of file path to content. When provided, branch is created automatically. |
+| `commit_message` | No       | Commit message for the file commit. Defaults to the PR title.                |
+
+File contents are sanitized for secrets just like all other string fields.
 
 ## Usage
 
@@ -157,7 +194,7 @@ jobs:
   gather-diagnostics:
     runs-on: ubuntu-latest
     permissions:
-      id-token: write   # Azure OIDC
+      id-token: write # Azure OIDC
       contents: read
     steps:
       - uses: azure/login@v2
@@ -182,7 +219,7 @@ jobs:
     needs: gather-diagnostics
     runs-on: ubuntu-latest
     permissions:
-      contents: read   # Read-only -- no cloud creds, no write token
+      contents: read # Read-only -- no cloud creds, no write token
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -248,28 +285,28 @@ redacting and proceeding:
 
 ## Inputs
 
-| Input | Description | Required | Default |
-|-------|-------------|----------|---------|
-| `artifact-path` | Path to the agent output JSON file | Yes | - |
-| `max-issues` | Max issues the agent can create per run | No | `1` |
-| `max-comments` | Max comments the agent can create per run | No | `3` |
-| `max-pull-requests` | Max PRs the agent can create per run | No | `1` |
-| `max-labels` | Max add-labels actions per run | No | `5` |
-| `title-prefix` | Required prefix for issue/PR titles | No | `''` |
-| `allowed-labels` | Comma-separated label allowlist (empty = all allowed) | No | `''` |
-| `custom-secret-patterns` | Additional regex patterns, one per line | No | `''` |
-| `dry-run` | Validate and sanitize without applying | No | `false` |
-| `fail-on-sanitize` | Fail if any content is redacted | No | `false` |
-| `token` | GitHub token for write operations | No | `${{ github.token }}` |
+| Input                    | Description                                           | Required | Default               |
+| ------------------------ | ----------------------------------------------------- | -------- | --------------------- |
+| `artifact-path`          | Path to the agent output JSON file                    | Yes      | -                     |
+| `max-issues`             | Max issues the agent can create per run               | No       | `1`                   |
+| `max-comments`           | Max comments the agent can create per run             | No       | `3`                   |
+| `max-pull-requests`      | Max PRs the agent can create per run                  | No       | `1`                   |
+| `max-labels`             | Max add-labels actions per run                        | No       | `5`                   |
+| `title-prefix`           | Required prefix for issue/PR titles                   | No       | `''`                  |
+| `allowed-labels`         | Comma-separated label allowlist (empty = all allowed) | No       | `''`                  |
+| `custom-secret-patterns` | Additional regex patterns, one per line               | No       | `''`                  |
+| `dry-run`                | Validate and sanitize without applying                | No       | `false`               |
+| `fail-on-sanitize`       | Fail if any content is redacted                       | No       | `false`               |
+| `token`                  | GitHub token for write operations                     | No       | `${{ github.token }}` |
 
 ## Outputs
 
-| Output | Description |
-|--------|-------------|
-| `applied-count` | Number of actions successfully applied |
-| `blocked-count` | Number of actions blocked by constraints |
-| `sanitized-count` | Number of fields with redacted content |
-| `summary` | JSON summary of all phases |
+| Output            | Description                              |
+| ----------------- | ---------------------------------------- |
+| `applied-count`   | Number of actions successfully applied   |
+| `blocked-count`   | Number of actions blocked by constraints |
+| `sanitized-count` | Number of fields with redacted content   |
+| `summary`         | JSON summary of all phases               |
 
 ## Built-in secret patterns
 
@@ -290,16 +327,16 @@ Add domain-specific patterns (e.g., internal IPs, cluster names) via the
 
 ## How it compares to gh-aw safe outputs
 
-| Dimension | gh-aw safe outputs | This action |
-|-----------|-------------------|-------------|
-| Integration | Built into gh-aw runtime | Standalone GitHub Action |
-| Agent scope | Repo-scoped only | Any data source |
-| Threat detection | AI-powered scan | Regex-based sanitization |
-| Configuration | Markdown frontmatter | Action inputs |
-| Network firewall | Built-in (AWF) | Not included (use separately) |
-| Customization | Declarative constraints | Full control via inputs |
+| Dimension        | gh-aw safe outputs       | This action                   |
+| ---------------- | ------------------------ | ----------------------------- |
+| Integration      | Built into gh-aw runtime | Standalone GitHub Action      |
+| Agent scope      | Repo-scoped only         | Any data source               |
+| Threat detection | AI-powered scan          | Regex-based sanitization      |
+| Configuration    | Markdown frontmatter     | Action inputs                 |
+| Network firewall | Built-in (AWF)           | Not included (use separately) |
+| Customization    | Declarative constraints  | Full control via inputs       |
 
-This action implements the *output gate* portion of gh-aw's security model. For
+This action implements the _output gate_ portion of gh-aw's security model. For
 the full defense-in-depth stack, combine it with:
 
 - **Scoped RBAC** on your cloud credentials (read-only K8s ClusterRole, Azure Reader)
