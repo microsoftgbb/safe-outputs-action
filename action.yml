@@ -1,0 +1,70 @@
+name: 'Safe Outputs for Agentic Workflows'
+description: >-
+  Security gate for AI agent outputs in GitHub Actions.
+  Validates constraints, sanitizes secrets, and applies actions
+  through a controlled write pipeline.
+  Inspired by GitHub Next Agentic Workflows (gh-aw).
+author: 'microsoftgbb'
+
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  artifact-path:
+    description: 'Path to the agent output JSON file'
+    required: true
+  max-issues:
+    description: 'Maximum number of issues the agent can create per run'
+    required: false
+    default: '1'
+  max-comments:
+    description: 'Maximum number of issue comments the agent can create per run'
+    required: false
+    default: '3'
+  max-pull-requests:
+    description: 'Maximum number of pull requests the agent can create per run'
+    required: false
+    default: '1'
+  max-labels:
+    description: 'Maximum number of add-labels actions per run'
+    required: false
+    default: '5'
+  title-prefix:
+    description: 'Required prefix for issue and PR titles (e.g., "[bot] ")'
+    required: false
+    default: ''
+  allowed-labels:
+    description: 'Comma-separated list of allowed labels. Empty means all labels are allowed.'
+    required: false
+    default: ''
+  custom-secret-patterns:
+    description: 'Additional regex patterns to scan for sensitive data (one per line)'
+    required: false
+    default: ''
+  dry-run:
+    description: 'When true, validates and sanitizes but does not apply actions'
+    required: false
+    default: 'false'
+  fail-on-sanitize:
+    description: 'When true, fails the action if any content is redacted instead of applying the sanitized version'
+    required: false
+    default: 'false'
+  token:
+    description: 'GitHub token for write operations. Should have issues:write and/or pull-requests:write scope.'
+    required: false
+    default: '${{ github.token }}'
+
+outputs:
+  applied-count:
+    description: 'Number of actions successfully applied'
+  blocked-count:
+    description: 'Number of actions blocked by constraints'
+  sanitized-count:
+    description: 'Number of fields that had sensitive content redacted'
+  summary:
+    description: 'JSON summary of validation, sanitization, and execution results'
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'

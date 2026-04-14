@@ -1,0 +1,1 @@
+{"version":3,"file":"","sourceRoot":"","sources":["file:///tmp/safe-outputs-action/src/sanitizer.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,WAAW,EAAE,MAAM,SAAS,CAAC;AAmCtC,MAAM,WAAW,cAAc;IAC7B,MAAM,EAAE,WAAW,CAAC;IACpB,aAAa,EAAE,MAAM,CAAC;IACtB,cAAc,EAAE,MAAM,EAAE,CAAC;CAC1B;AAED,wBAAgB,cAAc,CAC5B,MAAM,EAAE,WAAW,EACnB,cAAc,GAAE,MAAM,EAAO,GAC5B,cAAc,CA6BhB"}
