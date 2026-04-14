@@ -325,6 +325,35 @@ The sanitizer scans for these patterns by default:
 Add domain-specific patterns (e.g., internal IPs, cluster names) via the
 `custom-secret-patterns` input.
 
+## AI-powered threat detection
+
+When `threat-detection: true` is set and the Copilot CLI is installed on the
+runner, the action runs an AI-powered scan of the agent's proposed output.
+This catches threats that regex-based sanitization misses:
+
+- **Prompt injection** -- content designed to manipulate downstream LLMs
+- **Encoded credentials** -- base64-wrapped secrets, obfuscated tokens
+- **Malicious code** -- backdoors, data exfiltration, CI/CD weakening
+- **Social engineering** -- issue/PR content designed to trick human reviewers
+
+```yaml
+- uses: microsoftgbb/safe-outputs-action@v0
+  with:
+    artifact-path: output.json
+    threat-detection: true
+  env:
+    GITHUB_TOKEN: ${{ secrets.COPILOT_CLI_TOKEN }}
+```
+
+If the Copilot CLI is not available on the runner, threat detection is
+silently skipped and the action proceeds with regex-based sanitization only.
+
+The pipeline with threat detection enabled:
+
+```
+Validate constraints -> Sanitize secrets -> AI threat scan -> Apply actions
+```
+
 ## How it compares to gh-aw safe outputs
 
 | Dimension        | gh-aw safe outputs       | This action                   |

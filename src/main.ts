@@ -4,6 +4,7 @@ import { readFileSync } from 'fs';
 import { AgentOutput } from './types';
 import { validateOutput, ValidationConstraints } from './validator';
 import { sanitizeOutput } from './sanitizer';
+import { detectThreats } from './threat-detector';
 import { executeActions } from './executor';
 
 async function run(): Promise<void> {
@@ -25,6 +26,7 @@ async function run(): Promise<void> {
       .filter(Boolean);
     const dryRun = core.getBooleanInput('dry-run');
     const failOnSanitize = core.getBooleanInput('fail-on-sanitize');
+    const threatDetection = core.getBooleanInput('threat-detection');
     const token = core.getInput('token', { required: true });
 
     // Parse agent output
@@ -40,7 +42,7 @@ async function run(): Promise<void> {
     core.info(`Agent proposed ${output.actions?.length ?? 0} action(s)`);
 
     // Phase 1: Validate constraints
-    core.startGroup('Constraint validation');
+    core.startGroup('Phase 1: Constraint validation');
     const validation = validateOutput(output, constraints);
 
     if (!validation.valid) {
@@ -48,18 +50,17 @@ async function run(): Promise<void> {
         core.error(`BLOCKED [${block.index}] ${block.type}: ${block.reason}`);
       }
       core.endGroup();
-      core.setOutput('blocked-count', validation.blocked.length);
-      core.setOutput('applied-count', 0);
-      core.setOutput('sanitized-count', 0);
-      core.setOutput('summary', JSON.stringify({ phase: 'validation', validation }));
-      core.setFailed(`${validation.blocked.length} action(s) blocked by safe-outputs constraints`);
+      setOutputs({ blocked: validation.blocked.length, applied: 0, sanitized: 0 });
+      core.setFailed(
+        `${validation.blocked.length} action(s) blocked by safe-outputs constraints`
+      );
       return;
     }
     core.info(`All ${validation.passed} action(s) passed constraint validation`);
     core.endGroup();
 
     // Phase 2: Sanitize secrets
-    core.startGroup('Secret sanitization');
+    core.startGroup('Phase 2: Secret sanitization');
     const sanitization = sanitizeOutput(output, customPatterns);
 
     if (sanitization.redactedCount > 0) {
@@ -69,16 +70,7 @@ async function run(): Promise<void> {
 
       if (failOnSanitize) {
         core.endGroup();
-        core.setOutput('blocked-count', 0);
-        core.setOutput('applied-count', 0);
-        core.setOutput('sanitized-count', sanitization.redactedCount);
-        core.setOutput(
-          'summary',
-          JSON.stringify({
-            phase: 'sanitization',
-            sanitization: { fields: sanitization.redactedFields },
-          })
-        );
+        setOutputs({ blocked: 0, applied: 0, sanitized: sanitization.redactedCount });
         core.setFailed('Agent output contained sensitive data (fail-on-sanitize is enabled)');
         return;
       }
@@ -87,38 +79,51 @@ async function run(): Promise<void> {
     }
     core.endGroup();
 
-    // Phase 3: Execute (or dry-run)
-    core.startGroup('Execution');
+    // Phase 3: AI threat detection (optional)
+    if (threatDetection) {
+      core.startGroup('Phase 3: AI threat detection');
+      const threats = await detectThreats(sanitization.output);
+
+      if (threats.enabled) {
+        if (!threats.passed) {
+          for (const t of threats.threats) {
+            core.error(`THREAT [${t.severity}] ${t.description} (at ${t.location})`);
+          }
+          core.endGroup();
+          setOutputs({ blocked: 0, applied: 0, sanitized: sanitization.redactedCount });
+          core.setFailed(
+            `AI threat detection found ${threats.threats.length} threat(s) in agent output`
+          );
+          return;
+        }
+        core.info('AI threat detection passed - no threats found');
+      } else {
+        core.info('Copilot CLI not available - AI threat detection skipped');
+      }
+      core.endGroup();
+    }
+
+    // Phase 4: Execute (or dry-run)
+    core.startGroup(threatDetection ? 'Phase 4: Execution' : 'Phase 3: Execution');
     if (dryRun) {
       core.info('DRY RUN: Actions validated and sanitized but NOT applied');
-      core.setOutput('applied-count', 0);
+      setOutputs({ blocked: 0, applied: 0, sanitized: sanitization.redactedCount });
     } else {
       const octokit = github.getOctokit(token);
       const execution = await executeActions(octokit, github.context, sanitization.output);
 
       core.info(`Applied: ${execution.applied}, Failed: ${execution.failed}`);
-      core.setOutput('applied-count', execution.applied);
+      setOutputs({
+        blocked: 0,
+        applied: execution.applied,
+        sanitized: sanitization.redactedCount,
+      });
 
       if (execution.failed > 0) {
         core.setFailed(`${execution.failed} action(s) failed during execution`);
       }
     }
     core.endGroup();
-
-    core.setOutput('blocked-count', validation.blocked.length);
-    core.setOutput('sanitized-count', sanitization.redactedCount);
-    core.setOutput(
-      'summary',
-      JSON.stringify({
-        phase: 'complete',
-        validation: { passed: validation.passed },
-        sanitization: {
-          redacted: sanitization.redactedCount,
-          fields: sanitization.redactedFields,
-        },
-        dryRun,
-      })
-    );
   } catch (error) {
     if (error instanceof Error) {
       core.setFailed(error.message);
@@ -133,6 +138,12 @@ function parseList(input: string): string[] {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+function setOutputs(counts: { blocked: number; applied: number; sanitized: number }): void {
+  core.setOutput('blocked-count', counts.blocked);
+  core.setOutput('applied-count', counts.applied);
+  core.setOutput('sanitized-count', counts.sanitized);
 }
 
 run();

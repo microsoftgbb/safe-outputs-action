@@ -42,6 +42,10 @@ inputs:
     description: 'Additional regex patterns to scan for sensitive data (one per line)'
     required: false
     default: ''
+  threat-detection:
+    description: 'Enable AI-powered threat detection via Copilot CLI. Scans for prompt injection, credential leaks, malicious code, and social engineering. Requires Copilot CLI on the runner.'
+    required: false
+    default: 'false'
   dry-run:
     description: 'When true, validates and sanitizes but does not apply actions'
     required: false
