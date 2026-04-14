@@ -149,6 +149,7 @@ describe('sanitizeOutput - files map', () => {
     const result = sanitizeOutput(output);
     expect(result.redactedCount).toBe(1);
     expect(result.redactedFields).toContain('actions[0].files["config.yaml"]');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const pr = result.output.actions[0] as any;
     expect(pr.files['config.yaml']).not.toContain('SuperSecret123');
     expect(pr.files['readme.md']).toBe('Just a readme');

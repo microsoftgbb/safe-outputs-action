@@ -1,5 +1,5 @@
 import * as core from '@actions/core';
-import { exec, getExecOutput } from '@actions/exec';
+import { getExecOutput } from '@actions/exec';
 import { AgentOutput } from './types';
 
 export interface ThreatDetectionResult {
