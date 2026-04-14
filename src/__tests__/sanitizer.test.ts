@@ -31,9 +31,7 @@ describe('sanitizeOutput', () => {
   });
 
   it('redacts GitHub PATs', () => {
-    const output = makeOutput(
-      'Token: ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmn'
-    );
+    const output = makeOutput('Token: ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmn');
     const result = sanitizeOutput(output);
     expect(getBody(result.output)).not.toContain('ghp_');
     expect(result.redactedCount).toBe(1);
@@ -98,9 +96,7 @@ describe('sanitizeOutput', () => {
     const output = makeOutput('Cluster is healthy. 3 nodes running, 42 pods scheduled.');
     const result = sanitizeOutput(output);
     expect(result.redactedCount).toBe(0);
-    expect(getBody(result.output)).toBe(
-      'Cluster is healthy. 3 nodes running, 42 pods scheduled.'
-    );
+    expect(getBody(result.output)).toBe('Cluster is healthy. 3 nodes running, 42 pods scheduled.');
   });
 
   it('sanitizes across multiple actions and fields', () => {

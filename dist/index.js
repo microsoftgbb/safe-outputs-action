@@ -30139,7 +30139,10 @@ async function run() {
                 core.setOutput('blocked-count', 0);
                 core.setOutput('applied-count', 0);
                 core.setOutput('sanitized-count', sanitization.redactedCount);
-                core.setOutput('summary', JSON.stringify({ phase: 'sanitization', sanitization: { fields: sanitization.redactedFields } }));
+                core.setOutput('summary', JSON.stringify({
+                    phase: 'sanitization',
+                    sanitization: { fields: sanitization.redactedFields },
+                }));
                 core.setFailed('Agent output contained sensitive data (fail-on-sanitize is enabled)');
                 return;
             }
@@ -30228,10 +30231,7 @@ const DEFAULT_SECRET_PATTERNS = [
     /(?:secret|token|key|password)\s*[=:]\s*[0-9a-f]{40,}/gi,
 ];
 function sanitizeOutput(output, customPatterns = []) {
-    const patterns = [
-        ...DEFAULT_SECRET_PATTERNS,
-        ...compileCustomPatterns(customPatterns),
-    ];
+    const patterns = [...DEFAULT_SECRET_PATTERNS, ...compileCustomPatterns(customPatterns)];
     let redactedCount = 0;
     const redactedFields = [];
     // Deep clone to avoid mutating input

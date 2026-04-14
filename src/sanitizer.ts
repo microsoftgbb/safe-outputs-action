@@ -39,14 +39,8 @@ export interface SanitizeResult {
   redactedFields: string[];
 }
 
-export function sanitizeOutput(
-  output: AgentOutput,
-  customPatterns: string[] = []
-): SanitizeResult {
-  const patterns = [
-    ...DEFAULT_SECRET_PATTERNS,
-    ...compileCustomPatterns(customPatterns),
-  ];
+export function sanitizeOutput(output: AgentOutput, customPatterns: string[] = []): SanitizeResult {
+  const patterns = [...DEFAULT_SECRET_PATTERNS, ...compileCustomPatterns(customPatterns)];
 
   let redactedCount = 0;
   const redactedFields: string[] = [];

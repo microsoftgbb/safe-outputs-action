@@ -52,9 +52,7 @@ async function run(): Promise<void> {
       core.setOutput('applied-count', 0);
       core.setOutput('sanitized-count', 0);
       core.setOutput('summary', JSON.stringify({ phase: 'validation', validation }));
-      core.setFailed(
-        `${validation.blocked.length} action(s) blocked by safe-outputs constraints`
-      );
+      core.setFailed(`${validation.blocked.length} action(s) blocked by safe-outputs constraints`);
       return;
     }
     core.info(`All ${validation.passed} action(s) passed constraint validation`);
@@ -76,7 +74,10 @@ async function run(): Promise<void> {
         core.setOutput('sanitized-count', sanitization.redactedCount);
         core.setOutput(
           'summary',
-          JSON.stringify({ phase: 'sanitization', sanitization: { fields: sanitization.redactedFields } })
+          JSON.stringify({
+            phase: 'sanitization',
+            sanitization: { fields: sanitization.redactedFields },
+          })
         );
         core.setFailed('Agent output contained sensitive data (fail-on-sanitize is enabled)');
         return;
