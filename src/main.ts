@@ -51,9 +51,7 @@ async function run(): Promise<void> {
       }
       core.endGroup();
       setOutputs({ blocked: validation.blocked.length, applied: 0, sanitized: 0 });
-      core.setFailed(
-        `${validation.blocked.length} action(s) blocked by safe-outputs constraints`
-      );
+      core.setFailed(`${validation.blocked.length} action(s) blocked by safe-outputs constraints`);
       return;
     }
     core.info(`All ${validation.passed} action(s) passed constraint validation`);

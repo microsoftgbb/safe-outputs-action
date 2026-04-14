@@ -152,7 +152,9 @@ async function createBranchWithFiles(
   files: Record<string, string>,
   commitMessage: string
 ): Promise<void> {
-  core.info(`Creating branch "${headBranch}" from "${baseBranch}" with ${Object.keys(files).length} file(s)`);
+  core.info(
+    `Creating branch "${headBranch}" from "${baseBranch}" with ${Object.keys(files).length} file(s)`
+  );
 
   // 1. Get base branch SHA
   const { data: baseRef } = await octokit.rest.git.getRef({
