@@ -66,5 +66,5 @@ outputs:
     description: 'JSON summary of validation, sanitization, and execution results'
 
 runs:
-  using: 'node20'
+  using: 'node22'
   main: 'dist/index.js'
