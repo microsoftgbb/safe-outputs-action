@@ -76,7 +76,7 @@ async function run(): Promise<void> {
     };
     const protectedResult = checkProtectedFiles(output, protectedConfig);
 
-    if (!protectedResult.passed) {
+    if (protectedResult.violations.length > 0) {
       for (const v of protectedResult.violations) {
         const msg = `PROTECTED [${v.category}] ${v.path} (matched: ${v.matchedPattern})`;
         if (protectedConfig.action === 'block') {
