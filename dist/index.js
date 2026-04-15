@@ -47135,6 +47135,10 @@ async function run() {
             .map((p) => p.trim())
             .filter(Boolean);
         const protectedFilesAction = core.getInput('protected-files-action') || 'block';
+        if (protectedFilesAction !== 'block' && protectedFilesAction !== 'warn') {
+            core.setFailed(`Invalid protected-files-action: "${protectedFilesAction}". Must be "block" or "warn".`);
+            return;
+        }
         const protectedFilesPatterns = core
             .getInput('protected-files')
             .split('\n')
@@ -47178,7 +47182,7 @@ async function run() {
             overrideDefaults: protectedFilesOverrideDefaults,
         };
         const protectedResult = (0, protected_files_1.checkProtectedFiles)(output, protectedConfig);
-        if (!protectedResult.passed) {
+        if (protectedResult.violations.length > 0) {
             for (const v of protectedResult.violations) {
                 const msg = `PROTECTED [${v.category}] ${v.path} (matched: ${v.matchedPattern})`;
                 if (protectedConfig.action === 'block') {
@@ -47294,6 +47298,7 @@ exports.classifyPattern = classifyPattern;
 exports.isFileProtected = isFileProtected;
 exports.resolveProtectedConfig = resolveProtectedConfig;
 exports.checkProtectedFiles = checkProtectedFiles;
+const path_1 = __importDefault(__nccwpck_require__(6928));
 const picomatch_1 = __importDefault(__nccwpck_require__(4006));
 // ---------------------------------------------------------------------------
 // Built-in defaults
@@ -47306,15 +47311,15 @@ exports.DEFAULT_PROTECTED_PATTERNS = [
     '.claude/**',
     '.codex/**',
     '.github/copilot-instructions.md',
-    'package.json',
-    'package-lock.json',
-    'go.mod',
-    'go.sum',
-    'requirements.txt',
-    'Pipfile.lock',
-    'Gemfile.lock',
-    'pnpm-lock.yaml',
-    'yarn.lock',
+    '**/package.json',
+    '**/package-lock.json',
+    '**/go.mod',
+    '**/go.sum',
+    '**/requirements.txt',
+    '**/Pipfile.lock',
+    '**/Gemfile.lock',
+    '**/pnpm-lock.yaml',
+    '**/yarn.lock',
 ];
 // ---------------------------------------------------------------------------
 // Category classification
@@ -47322,15 +47327,15 @@ exports.DEFAULT_PROTECTED_PATTERNS = [
 const CATEGORY_MAP = [
     { pattern: '.github/workflows/**', category: 'CI config' },
     { pattern: '.github/actions/**', category: 'CI config' },
-    { pattern: 'package.json', category: 'Dependency manifest' },
-    { pattern: 'package-lock.json', category: 'Dependency manifest' },
-    { pattern: 'go.mod', category: 'Dependency manifest' },
-    { pattern: 'go.sum', category: 'Dependency manifest' },
-    { pattern: 'requirements.txt', category: 'Dependency manifest' },
-    { pattern: 'Pipfile.lock', category: 'Dependency manifest' },
-    { pattern: 'Gemfile.lock', category: 'Dependency manifest' },
-    { pattern: 'pnpm-lock.yaml', category: 'Dependency manifest' },
-    { pattern: 'yarn.lock', category: 'Dependency manifest' },
+    { pattern: '**/package.json', category: 'Dependency manifest' },
+    { pattern: '**/package-lock.json', category: 'Dependency manifest' },
+    { pattern: '**/go.mod', category: 'Dependency manifest' },
+    { pattern: '**/go.sum', category: 'Dependency manifest' },
+    { pattern: '**/requirements.txt', category: 'Dependency manifest' },
+    { pattern: '**/Pipfile.lock', category: 'Dependency manifest' },
+    { pattern: '**/Gemfile.lock', category: 'Dependency manifest' },
+    { pattern: '**/pnpm-lock.yaml', category: 'Dependency manifest' },
+    { pattern: '**/yarn.lock', category: 'Dependency manifest' },
     { pattern: 'AGENTS.md', category: 'Agent instructions' },
     { pattern: '.claude/**', category: 'Agent instructions' },
     { pattern: '.codex/**', category: 'Agent instructions' },
@@ -47408,7 +47413,18 @@ function checkProtectedFiles(output, config) {
             continue;
         for (const filepath of Object.keys(prAction.files)) {
             checkedFiles++;
-            const result = isFileProtected(filepath, patterns);
+            // Normalize to prevent bypass via ./, ../, or // in paths
+            const normalized = path_1.default.posix.normalize(filepath);
+            // Reject paths that escape the repo root
+            if (normalized.startsWith('../') || normalized.startsWith('/')) {
+                violations.push({
+                    path: filepath,
+                    matchedPattern: '<path-traversal>',
+                    category: 'Security',
+                });
+                continue;
+            }
+            const result = isFileProtected(normalized, patterns);
             if (result.protected && result.matchedPattern) {
                 violations.push({
                     path: filepath,
