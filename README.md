@@ -354,6 +354,118 @@ The pipeline with threat detection enabled:
 Validate constraints -> Sanitize secrets -> AI threat scan -> Apply actions
 ```
 
+## Composing with agent-sandbox-action
+
+This action provides the **output gate**: it validates constraints, sanitizes
+secrets, runs optional AI threat detection, and applies the agent's proposed
+actions through a controlled write pipeline. However, it does not control what
+the agent can *access* while it runs (network, filesystem, environment).
+
+For full defense-in-depth, pair it with
+[agent-sandbox-action](https://github.com/microsoftgbb/agent-sandbox-action),
+which provides **input containment**: the agent runs inside a Docker container
+on an isolated network with a Squid proxy enforcing a domain allowlist.
+
+Together the two actions cover both halves of the security model:
+
+| Layer | Action | What it guards |
+|-------|--------|----------------|
+| Input containment | `agent-sandbox-action` | Network access, filesystem, environment |
+| Output gate | `safe-outputs-action` | Comments, PRs, file writes, secret leakage |
+
+### Three-job pipeline example
+
+```yaml
+# Full defense-in-depth pipeline for AI agents
+# Combines agent-sandbox-action (input containment) with
+# safe-outputs-action (output gate)
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      AGENT_ALLOWED_DOMAINS: |
+        api.githubcopilot.com
+        api.github.com
+        .azmk8s.io
+        login.microsoftonline.com
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: microsoftgbb/agent-sandbox-action@v1
+        with:
+          command: |
+            copilot -p "Analyze the cluster diagnostics and produce
+              findings as agent-output.json following the safe-outputs
+              schema" --agent cluster-doctor --allow-all-tools
+          allowed-domains: ${{ env.AGENT_ALLOWED_DOMAINS }}
+          env-vars: |
+            GITHUB_TOKEN=${{ secrets.COPILOT_CLI_TOKEN }}
+          extra-mounts: |
+            ${{ env.HOME }}/.kube/config:/home/agent/.kube/config:ro
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-output
+          path: agent-output.json
+
+  scan:
+    needs: diagnose
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: agent-output
+
+      - uses: microsoftgbb/safe-outputs-action@v1
+        with:
+          artifact-path: agent-output.json
+          max-comments: 2
+          max-pull-requests: 1
+          title-prefix: "[bot] "
+          threat-detection: true
+          dry-run: true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scanned-output
+          path: agent-output.json
+          overwrite: true
+
+  apply:
+    needs: [diagnose, scan]
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: scanned-output
+
+      - uses: microsoftgbb/safe-outputs-action@v1
+        with:
+          artifact-path: agent-output.json
+          max-comments: 2
+          max-pull-requests: 1
+          title-prefix: "[bot] "
+```
+
+**Job 1 - diagnose**: Runs the AI agent inside the sandbox with network access
+limited to the domain allowlist. The agent produces `agent-output.json`.
+
+**Job 2 - scan**: Downloads the artifact and runs `safe-outputs-action` in
+`dry-run` mode. This validates constraints, sanitizes secrets, and (optionally)
+runs AI threat detection - without writing anything.
+
+**Job 3 - apply**: If the scan passes, the validated artifact is applied: the
+action creates comments, PRs, or file changes on behalf of the agent.
+
 ## How it compares to gh-aw safe outputs
 
 | Dimension        | gh-aw safe outputs       | This action                   |
