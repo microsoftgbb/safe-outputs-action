@@ -26,6 +26,12 @@ async function run(): Promise<void> {
       .map((p) => p.trim())
       .filter(Boolean);
     const protectedFilesAction = core.getInput('protected-files-action') || 'block';
+    if (protectedFilesAction !== 'block' && protectedFilesAction !== 'warn') {
+      core.setFailed(
+        `Invalid protected-files-action: "${protectedFilesAction}". Must be "block" or "warn".`
+      );
+      return;
+    }
     const protectedFilesPatterns = core
       .getInput('protected-files')
       .split('\n')
@@ -70,7 +76,7 @@ async function run(): Promise<void> {
     // Phase 2: Protected files check
     core.startGroup('Phase 2: Protected files check');
     const protectedConfig: ProtectedFilesConfig = {
-      action: protectedFilesAction as 'block' | 'warn',
+      action: protectedFilesAction,
       patterns: protectedFilesPatterns,
       overrideDefaults: protectedFilesOverrideDefaults,
     };
