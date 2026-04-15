@@ -94,10 +94,13 @@ export function isFileProtected(
   let isProtected = false;
   let matchedPattern: string | undefined;
 
-  for (const pattern of patterns) {
+  for (const raw of patterns) {
+    const pattern = raw.trim();
+    if (!pattern) continue;
+
     if (pattern.startsWith('!')) {
       const negated = pattern.slice(1);
-      if (picomatch.isMatch(filepath, negated, { dot: true })) {
+      if (negated && picomatch.isMatch(filepath, negated, { dot: true })) {
         isProtected = false;
         matchedPattern = undefined;
       }
