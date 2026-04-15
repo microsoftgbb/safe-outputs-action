@@ -1,3 +1,4 @@
+import path from 'path';
 import picomatch from 'picomatch';
 import { AgentOutput, CreatePullRequestAction } from './types';
 
@@ -156,7 +157,21 @@ export function checkProtectedFiles(
 
     for (const filepath of Object.keys(prAction.files)) {
       checkedFiles++;
-      const result = isFileProtected(filepath, patterns);
+
+      // Normalize to prevent bypass via ./, ../, or // in paths
+      const normalized = path.posix.normalize(filepath);
+
+      // Reject paths that escape the repo root
+      if (normalized.startsWith('../') || normalized.startsWith('/')) {
+        violations.push({
+          path: filepath,
+          matchedPattern: '<path-traversal>',
+          category: 'Security',
+        });
+        continue;
+      }
+
+      const result = isFileProtected(normalized, patterns);
       if (result.protected && result.matchedPattern) {
         violations.push({
           path: filepath,
