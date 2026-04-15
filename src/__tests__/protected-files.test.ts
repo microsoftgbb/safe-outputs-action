@@ -49,15 +49,15 @@ describe('DEFAULT_PROTECTED_PATTERNS', () => {
   });
 
   it('includes dependency manifest patterns', () => {
-    expect(DEFAULT_PROTECTED_PATTERNS).toContain('package.json');
-    expect(DEFAULT_PROTECTED_PATTERNS).toContain('package-lock.json');
-    expect(DEFAULT_PROTECTED_PATTERNS).toContain('go.mod');
-    expect(DEFAULT_PROTECTED_PATTERNS).toContain('go.sum');
-    expect(DEFAULT_PROTECTED_PATTERNS).toContain('requirements.txt');
-    expect(DEFAULT_PROTECTED_PATTERNS).toContain('Pipfile.lock');
-    expect(DEFAULT_PROTECTED_PATTERNS).toContain('Gemfile.lock');
-    expect(DEFAULT_PROTECTED_PATTERNS).toContain('pnpm-lock.yaml');
-    expect(DEFAULT_PROTECTED_PATTERNS).toContain('yarn.lock');
+    expect(DEFAULT_PROTECTED_PATTERNS).toContain('**/package.json');
+    expect(DEFAULT_PROTECTED_PATTERNS).toContain('**/package-lock.json');
+    expect(DEFAULT_PROTECTED_PATTERNS).toContain('**/go.mod');
+    expect(DEFAULT_PROTECTED_PATTERNS).toContain('**/go.sum');
+    expect(DEFAULT_PROTECTED_PATTERNS).toContain('**/requirements.txt');
+    expect(DEFAULT_PROTECTED_PATTERNS).toContain('**/Pipfile.lock');
+    expect(DEFAULT_PROTECTED_PATTERNS).toContain('**/Gemfile.lock');
+    expect(DEFAULT_PROTECTED_PATTERNS).toContain('**/pnpm-lock.yaml');
+    expect(DEFAULT_PROTECTED_PATTERNS).toContain('**/yarn.lock');
   });
 
   it('includes agent instructions patterns', () => {
@@ -79,9 +79,9 @@ describe('classifyPattern', () => {
   });
 
   it('classifies dependency manifest patterns', () => {
-    expect(classifyPattern('package.json')).toBe('Dependency manifest');
-    expect(classifyPattern('go.mod')).toBe('Dependency manifest');
-    expect(classifyPattern('yarn.lock')).toBe('Dependency manifest');
+    expect(classifyPattern('**/package.json')).toBe('Dependency manifest');
+    expect(classifyPattern('**/go.mod')).toBe('Dependency manifest');
+    expect(classifyPattern('**/yarn.lock')).toBe('Dependency manifest');
   });
 
   it('classifies agent instructions patterns', () => {
@@ -195,9 +195,9 @@ describe('resolveProtectedConfig', () => {
       overrideDefaults: false,
     });
     expect(patterns).toContain('deploy/**');
-    expect(patterns).toContain('package.json');
+    expect(patterns).toContain('**/package.json');
     // User pattern comes after defaults
-    expect(patterns.indexOf('deploy/**')).toBeGreaterThan(patterns.indexOf('package.json'));
+    expect(patterns.indexOf('deploy/**')).toBeGreaterThan(patterns.indexOf('**/package.json'));
   });
 
   it('skips defaults when overrideDefaults is true', () => {
@@ -207,7 +207,7 @@ describe('resolveProtectedConfig', () => {
       overrideDefaults: true,
     });
     expect(patterns).toEqual(['my-config.yml']);
-    expect(patterns).not.toContain('package.json');
+    expect(patterns).not.toContain('**/package.json');
   });
 
   it('returns empty array when overrideDefaults is true and no user patterns', () => {
@@ -318,7 +318,7 @@ describe('checkProtectedFiles', () => {
     it('user negation creates exception for defaults', () => {
       const config: ProtectedFilesConfig = {
         action: 'block',
-        patterns: ['!package-lock.json'],
+        patterns: ['!**/package-lock.json'],
         overrideDefaults: false,
       };
       const output = makePrOutput({ 'package-lock.json': '{}' });
@@ -541,6 +541,133 @@ describe('checkProtectedFiles', () => {
       // Empty strings passed through won't match normal file paths
       const result = checkProtectedFiles(output, config);
       expect(result.passed).toBe(true);
+    });
+  });
+
+  describe('path normalization', () => {
+    it('normalizes ./ prefix before matching', () => {
+      const output = makePrOutput({ './package.json': '{}' });
+      const result = checkProtectedFiles(output, blockConfig);
+      expect(result.passed).toBe(false);
+      expect(result.violations).toHaveLength(1);
+      expect(result.violations[0].path).toBe('./package.json');
+      expect(result.violations[0].category).toBe('Dependency manifest');
+    });
+
+    it('normalizes ../ traversal before matching', () => {
+      const output = makePrOutput({ 'sub/../CODEOWNERS': '* @team' });
+      const result = checkProtectedFiles(output, blockConfig);
+      expect(result.passed).toBe(false);
+      expect(result.violations).toHaveLength(1);
+      expect(result.violations[0].path).toBe('sub/../CODEOWNERS');
+      expect(result.violations[0].category).toBe('Access control');
+    });
+
+    it('normalizes double slashes before matching', () => {
+      const output = makePrOutput({ '.github//workflows//ci.yml': 'name: CI' });
+      const result = checkProtectedFiles(output, blockConfig);
+      expect(result.passed).toBe(false);
+      expect(result.violations).toHaveLength(1);
+      expect(result.violations[0].path).toBe('.github//workflows//ci.yml');
+      expect(result.violations[0].category).toBe('CI config');
+    });
+  });
+
+  describe('path traversal rejection', () => {
+    it('rejects paths that escape the repo root with ../', () => {
+      const output = makePrOutput({ '../../../etc/passwd': 'root:x:0:0' });
+      const result = checkProtectedFiles(output, blockConfig);
+      expect(result.passed).toBe(false);
+      expect(result.violations).toHaveLength(1);
+      expect(result.violations[0].matchedPattern).toBe('<path-traversal>');
+      expect(result.violations[0].category).toBe('Security');
+    });
+
+    it('rejects absolute paths', () => {
+      const output = makePrOutput({ '/absolute/path': 'content' });
+      const result = checkProtectedFiles(output, blockConfig);
+      expect(result.passed).toBe(false);
+      expect(result.violations).toHaveLength(1);
+      expect(result.violations[0].matchedPattern).toBe('<path-traversal>');
+      expect(result.violations[0].category).toBe('Security');
+    });
+
+    it('rejects paths that normalize to ../', () => {
+      const output = makePrOutput({ 'a/../../secret': 'content' });
+      const result = checkProtectedFiles(output, blockConfig);
+      expect(result.passed).toBe(false);
+      expect(result.violations).toHaveLength(1);
+      expect(result.violations[0].matchedPattern).toBe('<path-traversal>');
+      expect(result.violations[0].category).toBe('Security');
+    });
+  });
+
+  describe('monorepo depth matching', () => {
+    it('matches package.json in nested directories', () => {
+      const output = makePrOutput({ 'apps/web/package.json': '{}' });
+      const result = checkProtectedFiles(output, blockConfig);
+      expect(result.passed).toBe(false);
+      expect(result.violations).toHaveLength(1);
+      expect(result.violations[0].path).toBe('apps/web/package.json');
+      expect(result.violations[0].category).toBe('Dependency manifest');
+    });
+
+    it('matches go.mod in nested directories', () => {
+      const output = makePrOutput({ 'packages/core/go.mod': 'module example' });
+      const result = checkProtectedFiles(output, blockConfig);
+      expect(result.passed).toBe(false);
+      expect(result.violations).toHaveLength(1);
+      expect(result.violations[0].path).toBe('packages/core/go.mod');
+      expect(result.violations[0].category).toBe('Dependency manifest');
+    });
+
+    it('matches all dependency manifests at nested depth', () => {
+      const depFiles = [
+        'apps/web/package.json',
+        'services/api/package-lock.json',
+        'libs/core/go.mod',
+        'backend/go.sum',
+        'python/app/requirements.txt',
+        'services/worker/Pipfile.lock',
+        'ruby/Gemfile.lock',
+        'frontend/pnpm-lock.yaml',
+        'monorepo/packages/ui/yarn.lock',
+      ];
+      for (const file of depFiles) {
+        const output = makePrOutput({ [file]: 'content' });
+        const result = checkProtectedFiles(output, blockConfig);
+        expect(result.passed).toBe(false);
+        expect(result.violations[0].path).toBe(file);
+        expect(result.violations[0].category).toBe('Dependency manifest');
+      }
+    });
+
+    it('still matches root-level manifests', () => {
+      const output = makePrOutput({ 'package.json': '{}' });
+      const result = checkProtectedFiles(output, blockConfig);
+      expect(result.passed).toBe(false);
+      expect(result.violations[0].path).toBe('package.json');
+    });
+  });
+
+  describe('warn mode emits violations', () => {
+    it('returns violations array when action is warn', () => {
+      const output = makePrOutput({
+        'package.json': '{}',
+        '.github/workflows/ci.yml': 'ci',
+      });
+      const result = checkProtectedFiles(output, warnConfig);
+      expect(result.passed).toBe(true);
+      expect(result.violations).toHaveLength(2);
+      expect(result.violations.map((v) => v.path)).toContain('package.json');
+      expect(result.violations.map((v) => v.path)).toContain('.github/workflows/ci.yml');
+    });
+
+    it('returns empty violations array when no files are protected', () => {
+      const output = makePrOutput({ 'src/index.ts': 'code' });
+      const result = checkProtectedFiles(output, warnConfig);
+      expect(result.passed).toBe(true);
+      expect(result.violations).toHaveLength(0);
     });
   });
 
