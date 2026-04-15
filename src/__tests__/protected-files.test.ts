@@ -197,9 +197,7 @@ describe('resolveProtectedConfig', () => {
     expect(patterns).toContain('deploy/**');
     expect(patterns).toContain('package.json');
     // User pattern comes after defaults
-    expect(patterns.indexOf('deploy/**')).toBeGreaterThan(
-      patterns.indexOf('package.json')
-    );
+    expect(patterns.indexOf('deploy/**')).toBeGreaterThan(patterns.indexOf('package.json'));
   });
 
   it('skips defaults when overrideDefaults is true', () => {
@@ -405,7 +403,7 @@ describe('checkProtectedFiles', () => {
       const output = makePrOutput({
         'package.json': '{}',
         '.github/workflows/deploy.yml': 'deploy',
-        'CODEOWNERS': '* @admin',
+        CODEOWNERS: '* @admin',
         'src/safe.ts': 'safe code',
       });
       const result = checkProtectedFiles(output, blockConfig);
