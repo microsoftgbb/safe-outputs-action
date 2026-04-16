@@ -1,5 +1,6 @@
 import { executeActions } from '../executor';
 import { AgentOutput } from '../types';
+import { LifecycleConfig } from '../lifecycle';
 
 // Mock @actions/core
 jest.mock('@actions/core', () => ({
@@ -19,14 +20,23 @@ jest.mock('@actions/github', () => ({
 function createMockOctokit() {
   return {
     rest: {
+      search: {
+        issuesAndPullRequests: jest.fn().mockResolvedValue({
+          data: { items: [] },
+        }),
+      },
       issues: {
         createComment: jest.fn().mockResolvedValue({
           data: { html_url: 'https://github.com/test-owner/test-repo/issues/1#comment-1' },
         }),
         create: jest.fn().mockResolvedValue({
-          data: { html_url: 'https://github.com/test-owner/test-repo/issues/2' },
+          data: {
+            html_url: 'https://github.com/test-owner/test-repo/issues/2',
+            number: 2,
+          },
         }),
         addLabels: jest.fn().mockResolvedValue({ data: {} }),
+        update: jest.fn().mockResolvedValue({ data: {} }),
       },
       pulls: {
         create: jest.fn().mockResolvedValue({
@@ -237,6 +247,56 @@ describe('executeActions', () => {
     expect(result.applied).toBe(1);
     expect(octokit.rest.git.updateRef).toHaveBeenCalledWith(
       expect.objectContaining({ ref: 'heads/fix/existing', force: true })
+    );
+  });
+
+  it('embeds workflow-id marker when lifecycleConfig is provided', async () => {
+    const octokit = createMockOctokit();
+    const output: AgentOutput = {
+      actions: [
+        {
+          type: 'create_issue',
+          title: 'Test issue',
+          body: 'Issue body',
+        },
+      ],
+    };
+    const config: LifecycleConfig = {
+      workflowId: 'test-workflow',
+      closeOlderIssues: false,
+      closeOlderIssuesMax: 10,
+      groupByDay: false,
+    };
+
+    const result = await executeActions(octokit, github.context, output, config);
+
+    expect(result.applied).toBe(1);
+    expect(octokit.rest.issues.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.stringContaining('<!-- safe-outputs-workflow-id: test-workflow -->'),
+      })
+    );
+  });
+
+  it('does not embed marker when lifecycleConfig is undefined', async () => {
+    const octokit = createMockOctokit();
+    const output: AgentOutput = {
+      actions: [
+        {
+          type: 'create_issue',
+          title: 'Test issue',
+          body: 'Plain body',
+        },
+      ],
+    };
+
+    const result = await executeActions(octokit, github.context, output, undefined);
+
+    expect(result.applied).toBe(1);
+    expect(octokit.rest.issues.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: 'Plain body',
+      })
     );
   });
 });
