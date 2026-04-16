@@ -7,6 +7,7 @@ import { checkProtectedFiles, ProtectedFilesConfig } from './protected-files';
 import { sanitizeOutput } from './sanitizer';
 import { detectThreats } from './threat-detector';
 import { executeActions } from './executor';
+import { normalizeWorkflowId, LifecycleConfig } from './lifecycle';
 
 async function run(): Promise<void> {
   try {
@@ -44,6 +45,37 @@ async function run(): Promise<void> {
     const failOnSanitize = core.getBooleanInput('fail-on-sanitize');
     const threatDetection = core.getBooleanInput('threat-detection');
     const token = core.getInput('token', { required: true });
+
+    // Lifecycle inputs
+    const workflowId = core.getInput('workflow-id');
+    const closeOlderIssuesInput = core.getBooleanInput('close-older-issues');
+    const rawMax = parseInt(core.getInput('close-older-issues-max'), 10);
+    const closeOlderIssuesMax = Number.isNaN(rawMax) || rawMax < 1 ? 10 : rawMax;
+    const groupByDay = core.getBooleanInput('group-by-day');
+
+    let lifecycleConfig: LifecycleConfig | undefined;
+    if (workflowId) {
+      const normalized = normalizeWorkflowId(workflowId);
+      if (!normalized) {
+        core.setFailed(
+          `Invalid workflow-id: "${workflowId}". Must contain alphanumeric characters.`
+        );
+        return;
+      }
+      lifecycleConfig = {
+        workflowId: normalized,
+        closeOlderIssues: closeOlderIssuesInput,
+        closeOlderIssuesMax,
+        groupByDay,
+      };
+      core.info(`Workflow ID: ${normalized} (lifecycle features enabled)`);
+    } else {
+      if (closeOlderIssuesInput || groupByDay) {
+        core.warning(
+          'close-older-issues and group-by-day require workflow-id to be set. Lifecycle features disabled.'
+        );
+      }
+    }
 
     // Parse agent output
     core.info(`Reading agent output from: ${artifactPath}`);
@@ -152,10 +184,28 @@ async function run(): Promise<void> {
     core.startGroup(threatDetection ? 'Phase 5: Execution' : 'Phase 4: Execution');
     if (dryRun) {
       core.info('DRY RUN: Actions validated and sanitized but NOT applied');
+      if (lifecycleConfig) {
+        core.info(
+          `DRY RUN: Workflow ID "${lifecycleConfig.workflowId}" would be embedded in created content`
+        );
+        if (lifecycleConfig.closeOlderIssues) {
+          core.info(
+            'DRY RUN: close-older-issues is enabled - would search for and close previous issues'
+          );
+        }
+        if (lifecycleConfig.groupByDay) {
+          core.info('DRY RUN: group-by-day is enabled - would check for existing same-day issue');
+        }
+      }
       setOutputs({ blocked: 0, applied: 0, sanitized: sanitization.redactedCount });
     } else {
       const octokit = github.getOctokit(token);
-      const execution = await executeActions(octokit, github.context, sanitization.output);
+      const execution = await executeActions(
+        octokit,
+        github.context,
+        sanitization.output,
+        lifecycleConfig
+      );
 
       core.info(`Applied: ${execution.applied}, Failed: ${execution.failed}`);
       setOutputs({

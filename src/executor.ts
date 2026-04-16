@@ -1,6 +1,13 @@
 import * as core from '@actions/core';
 import * as github from '@actions/github';
 import { AgentOutput, AgentAction, CreatePullRequestAction } from './types';
+import {
+  LifecycleConfig,
+  embedMarker,
+  findOlderIssues,
+  closeOlderIssues,
+  findTodayIssue,
+} from './lifecycle';
 
 type Octokit = ReturnType<typeof github.getOctokit>;
 type Context = typeof github.context;
@@ -22,7 +29,8 @@ export interface ExecutionResult {
 export async function executeActions(
   octokit: Octokit,
   context: Context,
-  output: AgentOutput
+  output: AgentOutput,
+  lifecycleConfig?: LifecycleConfig
 ): Promise<ExecutionResult> {
   const results: ActionResult[] = [];
   let applied = 0;
@@ -31,7 +39,7 @@ export async function executeActions(
   for (let i = 0; i < output.actions.length; i++) {
     const action = output.actions[i];
     try {
-      const url = await applyAction(octokit, context, action);
+      const url = await applyAction(octokit, context, action, lifecycleConfig);
       results.push({ index: i, type: action.type, success: true, url });
       applied++;
       core.info(`[${i}] ${action.type} -> ${url}`);
@@ -49,35 +57,101 @@ export async function executeActions(
 async function applyAction(
   octokit: Octokit,
   context: Context,
-  action: AgentAction
+  action: AgentAction,
+  lifecycleConfig?: LifecycleConfig
 ): Promise<string> {
   const { owner, repo } = context.repo;
+  const wfId = lifecycleConfig?.workflowId;
 
   switch (action.type) {
     case 'issue_comment': {
+      const body = wfId ? embedMarker(action.body, wfId) : action.body;
       const { data } = await octokit.rest.issues.createComment({
         owner,
         repo,
         issue_number: action.issue_number,
-        body: action.body,
+        body,
       });
       return data.html_url;
     }
 
     case 'create_issue': {
+      const body = wfId ? embedMarker(action.body, wfId) : action.body;
+
+      // Group-by-day: append to existing same-day issue if found
+      if (wfId && lifecycleConfig?.groupByDay) {
+        const todayIssue = await findTodayIssue(octokit, owner, repo, wfId);
+        if (todayIssue) {
+          core.info(
+            `group-by-day: found existing issue #${todayIssue.number}, appending as comment`
+          );
+          const { data: comment } = await octokit.rest.issues.createComment({
+            owner,
+            repo,
+            issue_number: todayIssue.number,
+            body: `## ${action.title}\n\n${body}`,
+          });
+          // Apply labels and assignees to the existing issue if specified
+          if (action.labels?.length) {
+            await octokit.rest.issues.addLabels({
+              owner,
+              repo,
+              issue_number: todayIssue.number,
+              labels: action.labels,
+            });
+          }
+          if (action.assignees?.length) {
+            await octokit.rest.issues.addAssignees({
+              owner,
+              repo,
+              issue_number: todayIssue.number,
+              assignees: action.assignees,
+            });
+          }
+          return comment.html_url;
+        }
+        core.info('group-by-day: no existing same-day issue found, creating new');
+      }
+
+      // Close-older-issues: find older issues BEFORE creating
+      let olderIssues: Awaited<ReturnType<typeof findOlderIssues>> = [];
+      if (wfId && lifecycleConfig?.closeOlderIssues) {
+        olderIssues = await findOlderIssues(octokit, owner, repo, wfId);
+        core.info(`close-older-issues: found ${olderIssues.length} older issue(s)`);
+      }
+
+      // Create the new issue
       const { data } = await octokit.rest.issues.create({
         owner,
         repo,
         title: action.title,
-        body: action.body,
+        body,
         labels: action.labels,
         assignees: action.assignees,
       });
+
+      // Close older issues after successful creation
+      if (olderIssues.length > 0 && lifecycleConfig) {
+        const closed = await closeOlderIssues(
+          octokit,
+          owner,
+          repo,
+          olderIssues,
+          data.html_url,
+          lifecycleConfig.closeOlderIssuesMax
+        );
+        core.info(`close-older-issues: closed ${closed} older issue(s)`);
+      }
+
       return data.html_url;
     }
 
     case 'create_pull_request': {
-      return await createPullRequest(octokit, owner, repo, context, action);
+      const bodyWithMarker = wfId ? embedMarker(action.body, wfId) : action.body;
+      return await createPullRequest(octokit, owner, repo, context, {
+        ...action,
+        body: bodyWithMarker,
+      });
     }
 
     case 'add_labels': {
