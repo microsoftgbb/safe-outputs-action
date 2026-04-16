@@ -58,6 +58,22 @@ inputs:
     description: 'Enable AI-powered threat detection via Copilot CLI. Scans for prompt injection, credential leaks, malicious code, and social engineering. Requires Copilot CLI on the runner.'
     required: false
     default: 'false'
+  workflow-id:
+    description: 'Workflow identifier for lifecycle features. Enables marker embedding in all created content. When empty, lifecycle features are disabled. Normalized to kebab-case.'
+    required: false
+    default: ''
+  close-older-issues:
+    description: 'When true and workflow-id is set, auto-close previous open issues with the same workflow-id marker when creating a new issue. Closes as "not planned" with a linking comment.'
+    required: false
+    default: 'false'
+  close-older-issues-max:
+    description: 'Maximum number of older issues to close per run. Safety limit to prevent runaway closures.'
+    required: false
+    default: '10'
+  group-by-day:
+    description: 'When true and workflow-id is set, append to an existing same-day issue (UTC) instead of creating a new one. Posts the content as a comment on the existing issue.'
+    required: false
+    default: 'false'
   dry-run:
     description: 'When true, validates and sanitizes but does not apply actions'
     required: false
