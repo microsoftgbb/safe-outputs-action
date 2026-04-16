@@ -101,7 +101,7 @@ async function applyAction(
             });
           }
           if (action.assignees?.length) {
-            await octokit.rest.issues.update({
+            await octokit.rest.issues.addAssignees({
               owner,
               repo,
               issue_number: todayIssue.number,

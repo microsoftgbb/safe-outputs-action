@@ -427,6 +427,7 @@ describe('executor lifecycle integration', () => {
             },
           }),
           addLabels: jest.fn().mockResolvedValue({ data: {} }),
+          addAssignees: jest.fn().mockResolvedValue({ data: {} }),
         },
         pulls: {
           create: jest.fn().mockResolvedValue({
@@ -677,6 +678,55 @@ describe('executor lifecycle integration', () => {
       issue_number: 42,
       labels: ['bug', 'critical'],
     });
+  });
+
+  it('create_issue with group-by-day: applies assignees when appending to existing issue', async () => {
+    const octokit = createFullMockOctokit();
+
+    // findTodayIssue returns an existing issue
+    octokit.rest.search.issuesAndPullRequests.mockResolvedValue({
+      data: {
+        items: [{ number: 42, html_url: 'https://github.com/o/r/issues/42', title: 'Daily' }],
+      },
+    });
+
+    const output: AgentOutput = {
+      actions: [
+        {
+          type: 'create_issue',
+          title: 'New Finding',
+          body: 'Details here',
+          assignees: ['alice', 'bob'],
+        },
+      ],
+    };
+    const config = {
+      workflowId: 'daily-scan',
+      closeOlderIssues: false,
+      closeOlderIssuesMax: 10,
+      groupByDay: true,
+    };
+
+    const result = await executeActions(octokit, github.context, output, config);
+
+    expect(result.applied).toBe(1);
+    // Should NOT create a new issue
+    expect(octokit.rest.issues.create).not.toHaveBeenCalled();
+    // Should append as comment to existing issue
+    expect(octokit.rest.issues.createComment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        issue_number: 42,
+        body: expect.stringContaining('New Finding'),
+      })
+    );
+    // Should use addAssignees (additive), not issues.update (replace)
+    expect(octokit.rest.issues.addAssignees).toHaveBeenCalledWith({
+      owner: 'test-owner',
+      repo: 'test-repo',
+      issue_number: 42,
+      assignees: ['alice', 'bob'],
+    });
+    expect(octokit.rest.issues.update).not.toHaveBeenCalled();
   });
 
   it('does not embed markers when no lifecycleConfig provided', async () => {
