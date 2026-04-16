@@ -3,6 +3,7 @@ import * as github from '@actions/github';
 import { readFileSync } from 'fs';
 import { AgentOutput } from './types';
 import { validateOutput, ValidationConstraints } from './validator';
+import { checkProtectedFiles, ProtectedFilesConfig } from './protected-files';
 import { sanitizeOutput } from './sanitizer';
 import { detectThreats } from './threat-detector';
 import { executeActions } from './executor';
@@ -24,6 +25,21 @@ async function run(): Promise<void> {
       .split('\n')
       .map((p) => p.trim())
       .filter(Boolean);
+    const protectedFilesAction = core.getInput('protected-files-action') || 'block';
+    if (protectedFilesAction !== 'block' && protectedFilesAction !== 'warn') {
+      core.setFailed(
+        `Invalid protected-files-action: "${protectedFilesAction}". Must be "block" or "warn".`
+      );
+      return;
+    }
+    const protectedFilesPatterns = core
+      .getInput('protected-files')
+      .split('\n')
+      .map((p) => p.trim())
+      .filter(Boolean);
+    const protectedFilesOverrideDefaults = core.getBooleanInput(
+      'protected-files-override-defaults'
+    );
     const dryRun = core.getBooleanInput('dry-run');
     const failOnSanitize = core.getBooleanInput('fail-on-sanitize');
     const threatDetection = core.getBooleanInput('threat-detection');
@@ -57,8 +73,39 @@ async function run(): Promise<void> {
     core.info(`All ${validation.passed} action(s) passed constraint validation`);
     core.endGroup();
 
-    // Phase 2: Sanitize secrets
-    core.startGroup('Phase 2: Secret sanitization');
+    // Phase 2: Protected files check
+    core.startGroup('Phase 2: Protected files check');
+    const protectedConfig: ProtectedFilesConfig = {
+      action: protectedFilesAction,
+      patterns: protectedFilesPatterns,
+      overrideDefaults: protectedFilesOverrideDefaults,
+    };
+    const protectedResult = checkProtectedFiles(output, protectedConfig);
+
+    if (protectedResult.violations.length > 0) {
+      for (const v of protectedResult.violations) {
+        const msg = `PROTECTED [${v.category}] ${v.path} (matched: ${v.matchedPattern})`;
+        if (protectedConfig.action === 'block') {
+          core.error(msg);
+        } else {
+          core.warning(msg);
+        }
+      }
+
+      if (protectedConfig.action === 'block') {
+        core.endGroup();
+        setOutputs({ blocked: protectedResult.violations.length, applied: 0, sanitized: 0 });
+        core.setFailed(
+          `${protectedResult.violations.length} file(s) blocked by protected files policy`
+        );
+        return;
+      }
+    }
+    core.info(`Checked ${protectedResult.checkedFiles} file(s) across PR actions`);
+    core.endGroup();
+
+    // Phase 3: Sanitize secrets
+    core.startGroup('Phase 3: Secret sanitization');
     const sanitization = sanitizeOutput(output, customPatterns);
 
     if (sanitization.redactedCount > 0) {
@@ -77,9 +124,9 @@ async function run(): Promise<void> {
     }
     core.endGroup();
 
-    // Phase 3: AI threat detection (optional)
+    // Phase 4: AI threat detection (optional)
     if (threatDetection) {
-      core.startGroup('Phase 3: AI threat detection');
+      core.startGroup('Phase 4: AI threat detection');
       const threats = await detectThreats(sanitization.output);
 
       if (threats.enabled) {
@@ -101,8 +148,8 @@ async function run(): Promise<void> {
       core.endGroup();
     }
 
-    // Phase 4: Execute (or dry-run)
-    core.startGroup(threatDetection ? 'Phase 4: Execution' : 'Phase 3: Execution');
+    // Phase 5: Execute (or dry-run)
+    core.startGroup(threatDetection ? 'Phase 5: Execution' : 'Phase 4: Execution');
     if (dryRun) {
       core.info('DRY RUN: Actions validated and sanitized but NOT applied');
       setOutputs({ blocked: 0, applied: 0, sanitized: sanitization.redactedCount });

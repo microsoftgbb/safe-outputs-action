@@ -42,6 +42,18 @@ inputs:
     description: 'Additional regex patterns to scan for sensitive data (one per line)'
     required: false
     default: ''
+  protected-files:
+    description: 'Glob patterns for protected files (one per line). Uses .gitignore-compatible syntax via picomatch. Merged with built-in defaults unless override is set. Use ! prefix to create exceptions.'
+    required: false
+    default: ''
+  protected-files-action:
+    description: 'Action when protected files are modified: "block" (fail the check) or "warn" (annotate but continue)'
+    required: false
+    default: 'block'
+  protected-files-override-defaults:
+    description: 'When true, built-in default patterns are NOT applied. Only user-provided patterns are used.'
+    required: false
+    default: 'false'
   threat-detection:
     description: 'Enable AI-powered threat detection via Copilot CLI. Scans for prompt injection, credential leaks, malicious code, and social engineering. Requires Copilot CLI on the runner.'
     required: false
