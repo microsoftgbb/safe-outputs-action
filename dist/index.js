@@ -46959,6 +46959,23 @@ async function applyAction(octokit, context, action, lifecycleConfig) {
                         issue_number: todayIssue.number,
                         body: `## ${action.title}\n\n${body}`,
                     });
+                    // Apply labels and assignees to the existing issue if specified
+                    if (action.labels?.length) {
+                        await octokit.rest.issues.addLabels({
+                            owner,
+                            repo,
+                            issue_number: todayIssue.number,
+                            labels: action.labels,
+                        });
+                    }
+                    if (action.assignees?.length) {
+                        await octokit.rest.issues.update({
+                            owner,
+                            repo,
+                            issue_number: todayIssue.number,
+                            assignees: action.assignees,
+                        });
+                    }
                     return comment.html_url;
                 }
                 core.info('group-by-day: no existing same-day issue found, creating new');
@@ -47351,7 +47368,8 @@ async function run() {
         // Lifecycle inputs
         const workflowId = core.getInput('workflow-id');
         const closeOlderIssuesInput = core.getBooleanInput('close-older-issues');
-        const closeOlderIssuesMax = parseInt(core.getInput('close-older-issues-max'), 10) || 10;
+        const rawMax = parseInt(core.getInput('close-older-issues-max'), 10);
+        const closeOlderIssuesMax = Number.isNaN(rawMax) || rawMax < 1 ? 10 : rawMax;
         const groupByDay = core.getBooleanInput('group-by-day');
         let lifecycleConfig;
         if (workflowId) {
