@@ -46910,14 +46910,15 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.executeActions = executeActions;
 const core = __importStar(__nccwpck_require__(7484));
-async function executeActions(octokit, context, output) {
+const lifecycle_1 = __nccwpck_require__(6367);
+async function executeActions(octokit, context, output, lifecycleConfig) {
     const results = [];
     let applied = 0;
     let failed = 0;
     for (let i = 0; i < output.actions.length; i++) {
         const action = output.actions[i];
         try {
-            const url = await applyAction(octokit, context, action);
+            const url = await applyAction(octokit, context, action, lifecycleConfig);
             results.push({ index: i, type: action.type, success: true, url });
             applied++;
             core.info(`[${i}] ${action.type} -> ${url}`);
@@ -46931,31 +46932,65 @@ async function executeActions(octokit, context, output) {
     }
     return { applied, failed, results };
 }
-async function applyAction(octokit, context, action) {
+async function applyAction(octokit, context, action, lifecycleConfig) {
     const { owner, repo } = context.repo;
+    const wfId = lifecycleConfig?.workflowId;
     switch (action.type) {
         case 'issue_comment': {
+            const body = wfId ? (0, lifecycle_1.embedMarker)(action.body, wfId) : action.body;
             const { data } = await octokit.rest.issues.createComment({
                 owner,
                 repo,
                 issue_number: action.issue_number,
-                body: action.body,
+                body,
             });
             return data.html_url;
         }
         case 'create_issue': {
+            const body = wfId ? (0, lifecycle_1.embedMarker)(action.body, wfId) : action.body;
+            // Group-by-day: append to existing same-day issue if found
+            if (wfId && lifecycleConfig?.groupByDay) {
+                const todayIssue = await (0, lifecycle_1.findTodayIssue)(octokit, owner, repo, wfId);
+                if (todayIssue) {
+                    core.info(`group-by-day: found existing issue #${todayIssue.number}, appending as comment`);
+                    const { data: comment } = await octokit.rest.issues.createComment({
+                        owner,
+                        repo,
+                        issue_number: todayIssue.number,
+                        body: `## ${action.title}\n\n${body}`,
+                    });
+                    return comment.html_url;
+                }
+                core.info('group-by-day: no existing same-day issue found, creating new');
+            }
+            // Close-older-issues: find older issues BEFORE creating
+            let olderIssues = [];
+            if (wfId && lifecycleConfig?.closeOlderIssues) {
+                olderIssues = await (0, lifecycle_1.findOlderIssues)(octokit, owner, repo, wfId);
+                core.info(`close-older-issues: found ${olderIssues.length} older issue(s)`);
+            }
+            // Create the new issue
             const { data } = await octokit.rest.issues.create({
                 owner,
                 repo,
                 title: action.title,
-                body: action.body,
+                body,
                 labels: action.labels,
                 assignees: action.assignees,
             });
+            // Close older issues after successful creation
+            if (olderIssues.length > 0 && lifecycleConfig) {
+                const closed = await (0, lifecycle_1.closeOlderIssues)(octokit, owner, repo, olderIssues, data.html_url, lifecycleConfig.closeOlderIssuesMax);
+                core.info(`close-older-issues: closed ${closed} older issue(s)`);
+            }
             return data.html_url;
         }
         case 'create_pull_request': {
-            return await createPullRequest(octokit, owner, repo, context, action);
+            const bodyWithMarker = wfId ? (0, lifecycle_1.embedMarker)(action.body, wfId) : action.body;
+            return await createPullRequest(octokit, owner, repo, context, {
+                ...action,
+                body: bodyWithMarker,
+            });
         }
         case 'add_labels': {
             await octokit.rest.issues.addLabels({
@@ -47070,6 +47105,169 @@ async function createBranchWithFiles(octokit, owner, repo, baseBranch, headBranc
 
 /***/ }),
 
+/***/ 6367:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.normalizeWorkflowId = normalizeWorkflowId;
+exports.embedMarker = embedMarker;
+exports.findOlderIssues = findOlderIssues;
+exports.closeOlderIssues = closeOlderIssues;
+exports.findTodayIssue = findTodayIssue;
+const core = __importStar(__nccwpck_require__(7484));
+/**
+ * Normalize a workflow-id to kebab-case.
+ *
+ * - Lowercase
+ * - Replace spaces and underscores with hyphens
+ * - Strip characters that could break HTML comments (- - > <)
+ * - Collapse multiple hyphens
+ * - Trim leading/trailing hyphens
+ * - Validate: non-empty, max 128 characters, alphanumeric + hyphens only after normalization
+ *
+ * Returns the normalized string, or null if the input is invalid.
+ */
+function normalizeWorkflowId(raw) {
+    if (!raw || raw.trim().length === 0) {
+        return null;
+    }
+    let normalized = raw.toLowerCase();
+    // Replace spaces and underscores with hyphens
+    normalized = normalized.replace(/[\s_]+/g, '-');
+    // Strip characters unsafe for HTML comments (>, <) and the double-dash sequence
+    normalized = normalized.replace(/[><]/g, '');
+    // Keep only alphanumeric and hyphens
+    normalized = normalized.replace(/[^a-z0-9-]/g, '');
+    // Collapse multiple hyphens
+    normalized = normalized.replace(/-{2,}/g, '-');
+    // Trim leading/trailing hyphens
+    normalized = normalized.replace(/^-+|-+$/g, '');
+    // Validate: non-empty after normalization
+    if (normalized.length === 0) {
+        return null;
+    }
+    // Validate: max 128 characters
+    if (normalized.length > 128) {
+        return null;
+    }
+    return normalized;
+}
+/**
+ * Append workflow-id marker to a body string.
+ * Markers are HTML comments, invisible when rendered but searchable.
+ */
+function embedMarker(body, workflowId) {
+    const marker = `\n\n<!-- safe-outputs-workflow-id: ${workflowId} -->`;
+    return body + marker;
+}
+/**
+ * Search for open issues containing the workflow-id marker.
+ * Uses GitHub REST Search API with phrase matching.
+ *
+ * CRITICAL SAFETY: After search, filter results to exclude:
+ * - Items that are actually PRs (check item.pull_request field)
+ * - The excludeIssueNumber if provided (to skip the just-created issue)
+ */
+async function findOlderIssues(octokit, owner, repo, workflowId, excludeIssueNumber) {
+    const query = `"safe-outputs-workflow-id: ${workflowId}" repo:${owner}/${repo} is:issue is:open in:body`;
+    const { data } = await octokit.rest.search.issuesAndPullRequests({
+        q: query,
+        sort: 'created',
+        order: 'desc',
+        per_page: 30,
+    });
+    // HARD GUARD: Filter out PRs (search API returns both despite is:issue)
+    return data.items
+        .filter((item) => !item.pull_request)
+        .filter((item) => item.number !== excludeIssueNumber);
+}
+/**
+ * Close older issues as "not_planned" with a linking comment.
+ * Caps at max closures for safety.
+ */
+async function closeOlderIssues(octokit, owner, repo, olderIssues, newIssueUrl, max) {
+    const toClose = olderIssues.slice(0, max);
+    let closed = 0;
+    for (const issue of toClose) {
+        try {
+            await octokit.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: issue.number,
+                body: `Superseded by ${newIssueUrl}. This issue was auto-closed because a newer report was created by the same workflow.`,
+            });
+            await octokit.rest.issues.update({
+                owner,
+                repo,
+                issue_number: issue.number,
+                state: 'closed',
+                state_reason: 'not_planned',
+            });
+            closed++;
+        }
+        catch (error) {
+            // Log but don't fail - closing older issues is best-effort
+            core.warning(`Failed to close issue #${issue.number}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+    return closed;
+}
+/**
+ * Search for an open issue created today (UTC) with the same workflow-id marker.
+ * Returns the first match or null.
+ */
+async function findTodayIssue(octokit, owner, repo, workflowId) {
+    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD UTC
+    const query = `"safe-outputs-workflow-id: ${workflowId}" repo:${owner}/${repo} is:issue is:open created:${today} in:body`;
+    const { data } = await octokit.rest.search.issuesAndPullRequests({
+        q: query,
+        sort: 'created',
+        order: 'desc',
+        per_page: 5,
+    });
+    // HARD GUARD: Filter out PRs
+    const issues = data.items.filter((item) => !item.pull_request);
+    return issues.length > 0 ? issues[0] : null;
+}
+
+
+/***/ }),
+
 /***/ 1730:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -47117,6 +47315,7 @@ const protected_files_1 = __nccwpck_require__(4399);
 const sanitizer_1 = __nccwpck_require__(8820);
 const threat_detector_1 = __nccwpck_require__(2386);
 const executor_1 = __nccwpck_require__(8282);
+const lifecycle_1 = __nccwpck_require__(6367);
 async function run() {
     try {
         // Read inputs
@@ -47149,6 +47348,31 @@ async function run() {
         const failOnSanitize = core.getBooleanInput('fail-on-sanitize');
         const threatDetection = core.getBooleanInput('threat-detection');
         const token = core.getInput('token', { required: true });
+        // Lifecycle inputs
+        const workflowId = core.getInput('workflow-id');
+        const closeOlderIssuesInput = core.getBooleanInput('close-older-issues');
+        const closeOlderIssuesMax = parseInt(core.getInput('close-older-issues-max'), 10) || 10;
+        const groupByDay = core.getBooleanInput('group-by-day');
+        let lifecycleConfig;
+        if (workflowId) {
+            const normalized = (0, lifecycle_1.normalizeWorkflowId)(workflowId);
+            if (!normalized) {
+                core.setFailed(`Invalid workflow-id: "${workflowId}". Must contain alphanumeric characters.`);
+                return;
+            }
+            lifecycleConfig = {
+                workflowId: normalized,
+                closeOlderIssues: closeOlderIssuesInput,
+                closeOlderIssuesMax,
+                groupByDay,
+            };
+            core.info(`Workflow ID: ${normalized} (lifecycle features enabled)`);
+        }
+        else {
+            if (closeOlderIssuesInput || groupByDay) {
+                core.warning('close-older-issues and group-by-day require workflow-id to be set. Lifecycle features disabled.');
+            }
+        }
         // Parse agent output
         core.info(`Reading agent output from: ${artifactPath}`);
         const raw = (0, fs_1.readFileSync)(artifactPath, 'utf-8');
@@ -47242,11 +47466,20 @@ async function run() {
         core.startGroup(threatDetection ? 'Phase 5: Execution' : 'Phase 4: Execution');
         if (dryRun) {
             core.info('DRY RUN: Actions validated and sanitized but NOT applied');
+            if (lifecycleConfig) {
+                core.info(`DRY RUN: Workflow ID "${lifecycleConfig.workflowId}" would be embedded in created content`);
+                if (lifecycleConfig.closeOlderIssues) {
+                    core.info('DRY RUN: close-older-issues is enabled - would search for and close previous issues');
+                }
+                if (lifecycleConfig.groupByDay) {
+                    core.info('DRY RUN: group-by-day is enabled - would check for existing same-day issue');
+                }
+            }
             setOutputs({ blocked: 0, applied: 0, sanitized: sanitization.redactedCount });
         }
         else {
             const octokit = github.getOctokit(token);
-            const execution = await (0, executor_1.executeActions)(octokit, github.context, sanitization.output);
+            const execution = await (0, executor_1.executeActions)(octokit, github.context, sanitization.output, lifecycleConfig);
             core.info(`Applied: ${execution.applied}, Failed: ${execution.failed}`);
             setOutputs({
                 blocked: 0,

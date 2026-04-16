@@ -131,13 +131,10 @@ async function applyAction(
 
     case 'create_pull_request': {
       const bodyWithMarker = wfId ? embedMarker(action.body, wfId) : action.body;
-      return await createPullRequest(
-        octokit,
-        owner,
-        repo,
-        context,
-        { ...action, body: bodyWithMarker }
-      );
+      return await createPullRequest(octokit, owner, repo, context, {
+        ...action,
+        body: bodyWithMarker,
+      });
     }
 
     case 'add_labels': {

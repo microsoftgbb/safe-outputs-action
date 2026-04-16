@@ -351,9 +351,7 @@ describe('findTodayIssue', () => {
     const octokit = createMockOctokit();
     octokit.rest.search.issuesAndPullRequests.mockResolvedValue({
       data: {
-        items: [
-          { number: 50, html_url: 'url', title: 'PR', pull_request: { url: 'pr-url' } },
-        ],
+        items: [{ number: 50, html_url: 'url', title: 'PR', pull_request: { url: 'pr-url' } }],
       },
     });
 
@@ -536,9 +534,7 @@ describe('executor lifecycle integration', () => {
     // Search returns older issues
     octokit.rest.search.issuesAndPullRequests.mockResolvedValue({
       data: {
-        items: [
-          { number: 5, html_url: 'https://github.com/o/r/issues/5', title: 'Old' },
-        ],
+        items: [{ number: 5, html_url: 'https://github.com/o/r/issues/5', title: 'Old' }],
       },
     });
 
@@ -580,9 +576,7 @@ describe('executor lifecycle integration', () => {
     // findTodayIssue returns an existing issue
     octokit.rest.search.issuesAndPullRequests.mockResolvedValue({
       data: {
-        items: [
-          { number: 42, html_url: 'https://github.com/o/r/issues/42', title: 'Daily' },
-        ],
+        items: [{ number: 42, html_url: 'https://github.com/o/r/issues/42', title: 'Daily' }],
       },
     });
 

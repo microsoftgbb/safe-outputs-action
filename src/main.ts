@@ -193,9 +193,7 @@ async function run(): Promise<void> {
           );
         }
         if (lifecycleConfig.groupByDay) {
-          core.info(
-            'DRY RUN: group-by-day is enabled - would check for existing same-day issue'
-          );
+          core.info('DRY RUN: group-by-day is enabled - would check for existing same-day issue');
         }
       }
       setOutputs({ blocked: 0, applied: 0, sanitized: sanitization.redactedCount });
