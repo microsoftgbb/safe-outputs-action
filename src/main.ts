@@ -49,7 +49,8 @@ async function run(): Promise<void> {
     // Lifecycle inputs
     const workflowId = core.getInput('workflow-id');
     const closeOlderIssuesInput = core.getBooleanInput('close-older-issues');
-    const closeOlderIssuesMax = parseInt(core.getInput('close-older-issues-max'), 10) || 10;
+    const rawMax = parseInt(core.getInput('close-older-issues-max'), 10);
+    const closeOlderIssuesMax = Number.isNaN(rawMax) || rawMax < 1 ? 10 : rawMax;
     const groupByDay = core.getBooleanInput('group-by-day');
 
     let lifecycleConfig: LifecycleConfig | undefined;
